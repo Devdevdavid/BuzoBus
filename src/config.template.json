@@ -1,0 +1,15 @@
+{
+    "checkPeriodSec": 60,
+    "openData": {
+        "apiKey": "<YOUR KEY>",
+        "geojsonServer": "https://data.bordeaux-metropole.fr/geojson"
+    },
+    "stop": {
+        "name": "Pelletan",
+        "id": "B_PET41_A"
+    },
+    "bus": {
+        "name": "Lianes 8",
+        "direction": "Malartic"
+    }
+}
