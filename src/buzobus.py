@@ -12,10 +12,21 @@ import json
 import urllib.request
 import logging
 from datetime import datetime
+from notifypy import Notify
 
 # Constants
 APP_NAME = "Buzobus"
 APP_DESC = "Periodically fetch bus timming table to alert user with a buzzer when its time to go"
+
+def send_notification(title, message):
+    notification = Notify(
+      default_notification_title=title,
+      default_application_name=APP_NAME,
+      default_notification_icon="tbm.png",
+    )
+    notification.message = message
+    notification.send(block=False)
+
 
 class Buzobus:
     """
@@ -27,7 +38,6 @@ class Buzobus:
     # Variables
     # =============
 
-    isAppQuitting = False   # Tell if user want to quit
     config = None           # Store the configuration
 
     # =============
@@ -37,10 +47,21 @@ class Buzobus:
     def handler_sigint(self, signum, frame):
         self.isAppQuitting = True
 
-    def __init__(self):
+    def __init__(self, logger):
+        # Init
+        self.isAppQuitting = False
+        self.logger = logger
+
         # Check arguments
         parser = argparse.ArgumentParser(description=APP_DESC)
-        args = parser.parse_args()
+        parser.add_argument('--verbose', help='Enable verbose logs', default=False, action='store_true')
+
+        # Use vars() to get python dict from Namespace object
+        self.args = vars(parser.parse_args())
+
+        # Handle args
+        if self.args["verbose"]:
+            self.logger.setLevel(logging.DEBUG)
 
     def get_json_from_url(self, url):
         openUrl = urllib.request.urlopen(url)
@@ -70,8 +91,8 @@ class Buzobus:
         url += 'key=' + self.config["openData"]["apiKey"]
         url += '&attributes=["IDENT","LIBELLE"]'
 
-        logging.info("Getting stops")
-        logging.debug("Reading {0}".format(url))
+        self.logger.info("Getting stops")
+        self.logger.debug("Reading {0}".format(url))
 
         jsonResult = self.get_json_from_url(url)
         self.save_json_to_file("stops.json", jsonResult)
@@ -85,8 +106,8 @@ class Buzobus:
         url += '&datainputs={"arret_id":"' + stopId + '"}'
         url += '&attributes=["libelle","hor_estime","terminus"]'
 
-        logging.info("Getting bus times")
-        logging.debug("Reading {0}".format(url))
+        self.logger.info("Getting bus times")
+        self.logger.debug("Reading {0}".format(url))
 
         jsonResult = self.get_json_from_url(url)
         self.save_json_to_file("busTimes.json", jsonResult)
@@ -102,7 +123,7 @@ class Buzobus:
 
         # Print count
         stopCount = len(jsonStops['features'])
-        logging.info("Found {0} stops".format(stopCount))
+        self.logger.info("Found {0} stops".format(stopCount))
 
         for feature in jsonStops['features']:
             # Ignore features without the expected data
@@ -123,12 +144,12 @@ class Buzobus:
             busStopIds.append(properties['ident'])
 
         if len(busStopIds) == 1:
-            logging.info("Found busStopId = {0}".format(busStopIds[0]))
+            self.logger.info("Found busStopId = {0}".format(busStopIds[0]))
             return busStopIds[0]
 
-        logging.info("Found {0} bus stops:".format(len(busStopIds)))
+        self.logger.info("Found {0} bus stops:".format(len(busStopIds)))
         for busStopId in busStopIds:
-            logging.info("- {0}".format(busStopId))
+            self.logger.info("- {0}".format(busStopId))
 
         raise RuntimeError('"' + self.config["stop"]["name"] + '" not found in JSON, check CONFIG_BUS_STOP')
 
@@ -141,7 +162,7 @@ class Buzobus:
 
         # Print count
         busTimesCount = len(jsonBusTime['features'])
-        logging.info("Found {0} bus times".format(busTimesCount))
+        self.logger.info("Found {0} bus times".format(busTimesCount))
 
         # No informations for now
         if (busTimesCount == 0):
@@ -171,7 +192,7 @@ class Buzobus:
             timeTable.append(properties['hor_estime'])
 
         if len(timeTable) == 0:
-            logging.info("Here are the possibilities:")
+            self.logger.info("Here are the possibilities:")
             for feature in jsonBusTime['features']:
                 # Ignore features without the expected data
                 if not 'properties' in feature:
@@ -187,7 +208,7 @@ class Buzobus:
                 if not 'hor_estime' in properties:
                     continue
 
-                logging.info("- {0} ({1})".format(properties['libelle'], properties['terminus']))
+                self.logger.info("- {0} ({1})".format(properties['libelle'], properties['terminus']))
 
             raise RuntimeError('"' + self.config["bus"]["name"] + ' (' + self.config["bus"]["direction"] + ')" not found in JSON, check CONFIG_BUS_*')
 
@@ -197,25 +218,49 @@ class Buzobus:
         difference = date - datetime.now()
         return difference.seconds // 60
 
-    def display_time_table(self, timeTable):
+    def get_remaining_time_table(self, timeTable):
         # Got something like "2021-06-04T22:55:58"
-        logging.info("Next bus:")
-
-        # Handle case with no info
-        if (len(timeTable) == 0):
-            logging.info("- Pas d'information")
-            return
+        remTimeTable = []
 
         for timeStr in timeTable:
             timeObj = datetime.strptime(timeStr, '%Y-%m-%dT%H:%M:%S')
             diffInMin = self.get_datetime_diff_from_now(timeObj)
+            remTimeTable.append(diffInMin)
 
-            if (diffInMin == 0):
-                logging.info("- Proche")
-            elif (diffInMin >= 60):
-                logging.info("- Plus d'une heure")
+        return remTimeTable
+
+    def get_text_time_table(self, remTimeTable):
+        textTimeTable = []
+
+        for remTimeStr in remTimeTable:
+            if (remTimeStr == 0):
+                textTimeTable.append("Proche")
+            elif (remTimeStr >= 60):
+                textTimeTable.append("Plus d'une heure")
             else:
-                logging.info("- {0:2} min".format(diffInMin))
+                textTimeTable.append("{0:2} min".format(remTimeStr))
+
+        return textTimeTable
+
+    def display_time_table(self, textTimeTable):
+        self.logger.info("Next bus:")
+
+        # Handle case with no info
+        if (len(textTimeTable) == 0):
+            self.logger.info("- Pas d'information")
+            return
+
+        for textTimeStr in textTimeTable:
+            self.logger.info("- " + textTimeStr)
+
+    def notify_user(self, textTime):
+        title = "{0} ({1}) - Arrêt {2}".format(
+            self.config["bus"]["name"],
+            self.config["bus"]["direction"],
+            self.config["stop"]["name"]
+        )
+        message = "Prochain bus: {0}".format(textTime)
+        send_notification(title, message)
 
     def run(self):
         # Read configuration
@@ -228,37 +273,35 @@ class Buzobus:
         else:
             stopId = self.config["stop"]["id"]
 
-        while (not self.isAppQuitting):
-            # Sleep
-            time.sleep(1)
+        # Act
+        jsonBusTime = self.bdd_get_next_bus_times(stopId)
+        nextTimes = self.extract_next_bus_times(jsonBusTime)
+        remTimeTable = self.get_remaining_time_table(nextTimes)
+        textTimeTable = self.get_text_time_table(remTimeTable)
+        self.display_time_table(textTimeTable)
 
-            # Act
-            jsonBusTime = self.bdd_get_next_bus_times(stopId)
-            nextTimes = self.extract_next_bus_times(jsonBusTime)
-            self.display_time_table(nextTimes)
-
-            # Debug
-            self.isAppQuitting = True
-
-        # We are leaving
-        logging.warning("Quitting gracefully")
-
+        # Send notification to user with the next incomming bus
+        if (len(remTimeTable) >= 1):
+            threshold = self.config["user"]["walkTimeMin"]
+            if (remTimeTable[0] >= threshold) and (remTimeTable[0] < threshold + 5):
+                self.notify_user(textTimeTable[0])
 
 if __name__ == '__main__':
+    # Logging
+    logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
+    logger = logging.getLogger(APP_NAME)
+
     # Init app
-    app = Buzobus()
+    app = Buzobus(logger)
 
     # Configure signal handler
     signal.signal(signal.SIGINT, app.handler_sigint);
-
-    # Logging
-    logging.basicConfig(format='[%(levelname)s] %(message)s', level=logging.INFO)
 
     # Main loop
     try:
         app.run()
     except Exception as e:
-        logging.error("Exit with errors: " + str(e));
+        logger.error("Exit with errors: " + str(e));
 
 
 

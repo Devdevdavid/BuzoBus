@@ -1,4 +1,14 @@
 {
     "type": "FeatureCollection",
-    "features": []
+    "features": [
+        {
+            "type": "Feature",
+            "geometry": null,
+            "properties": {
+                "libelle": "Lianes 8",
+                "hor_estime": "2021-06-14T22:15:49",
+                "terminus": "Malartic"
+            }
+        }
+    ]
 }

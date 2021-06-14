@@ -11,5 +11,8 @@
     "bus": {
         "name": "Lianes 8",
         "direction": "Malartic"
+    },
+    "user": {
+        "walkTimeMin": 6
     }
 }
