@@ -16,7 +16,7 @@ from notifypy import Notify
 
 # Constants
 APP_NAME = "Buzobus"
-APP_DESC = "Periodically fetch bus timming table to alert user with a buzzer when its time to go"
+APP_DESC = "Periodically fetch bus timming table to alert user with a buzzer or notification when its time to go"
 
 def send_notification(title, message):
     notification = Notify(
@@ -55,6 +55,8 @@ class Buzobus:
         # Check arguments
         parser = argparse.ArgumentParser(description=APP_DESC)
         parser.add_argument('--verbose', help='Enable verbose logs', default=False, action='store_true')
+        parser.add_argument('--always_notif', help='Always send notifications', default=False, action='store_true')
+        parser.add_argument('--no_notif', help='Prevent notifications', default=False, action='store_true')
 
         # Use vars() to get python dict from Namespace object
         self.args = vars(parser.parse_args())
@@ -95,7 +97,7 @@ class Buzobus:
         self.logger.debug("Reading {0}".format(url))
 
         jsonResult = self.get_json_from_url(url)
-        self.save_json_to_file("stops.json", jsonResult)
+        self.save_json_to_file("stops_list.json", jsonResult)
 
         return jsonResult
 
@@ -110,7 +112,8 @@ class Buzobus:
         self.logger.debug("Reading {0}".format(url))
 
         jsonResult = self.get_json_from_url(url)
-        self.save_json_to_file("busTimes.json", jsonResult)
+        if self.args["verbose"]:
+            self.save_json_to_file("bus_times.json", jsonResult)
 
         return jsonResult
 
@@ -143,15 +146,21 @@ class Buzobus:
 
             busStopIds.append(properties['ident'])
 
+        # Only one found, great !
         if len(busStopIds) == 1:
             self.logger.info("Found busStopId = {0}".format(busStopIds[0]))
             return busStopIds[0]
 
+        # Nothing found
+        if len(busStopIds) == 0:
+            raise RuntimeError('"' + self.config["stop"]["name"] + '" not found in JSON, check your config /stop/name')
+
+        # More than one found, user need to choose
         self.logger.info("Found {0} bus stops:".format(len(busStopIds)))
         for busStopId in busStopIds:
             self.logger.info("- {0}".format(busStopId))
 
-        raise RuntimeError('"' + self.config["stop"]["name"] + '" not found in JSON, check CONFIG_BUS_STOP')
+        raise RuntimeError('Choose one of those StopId and put in into yout config under /stop/id')
 
     def extract_next_bus_times(self, jsonBusTime):
         timeTable = []
@@ -162,10 +171,10 @@ class Buzobus:
 
         # Print count
         busTimesCount = len(jsonBusTime['features'])
-        self.logger.info("Found {0} bus times".format(busTimesCount))
 
         # No informations for now
         if (busTimesCount == 0):
+            self.logger.info("Found {0} bus times".format(busTimesCount))
             return timeTable
 
         for feature in jsonBusTime['features']:
@@ -208,9 +217,12 @@ class Buzobus:
                 if not 'hor_estime' in properties:
                     continue
 
-                self.logger.info("- {0} ({1})".format(properties['libelle'], properties['terminus']))
+                self.logger.info("- Name: {0}, Direction: {1}".format(properties['libelle'], properties['terminus']))
 
-            raise RuntimeError('"' + self.config["bus"]["name"] + ' (' + self.config["bus"]["direction"] + ')" not found in JSON, check CONFIG_BUS_*')
+            if (self.config["bus"]["name"] == "") or (self.config["bus"]["direction"] == ""):
+                raise RuntimeError('Choose a bus name and direction and put it into your config under /bus/name and /bus/direction')
+            else:
+                raise RuntimeError('"' + self.config["bus"]["name"] + ' (' + self.config["bus"]["direction"] + ')" not found in JSON, check config /bus/*')
 
         return timeTable
 
@@ -280,11 +292,25 @@ class Buzobus:
         textTimeTable = self.get_text_time_table(remTimeTable)
         self.display_time_table(textTimeTable)
 
-        # Send notification to user with the next incomming bus
-        if (len(remTimeTable) >= 1):
+        # Do nothing if there is no informations
+        if (len(remTimeTable) == 0):
+            return
+
+        # Check if user wants notification or not
+        if self.args["no_notif"]:
+            return;
+
+        # Do range check if we don't want to always send notification
+        if self.args["always_notif"] == False:
             threshold = self.config["user"]["walkTimeMin"]
-            if (remTimeTable[0] >= threshold) and (remTimeTable[0] < threshold + 5):
-                self.notify_user(textTimeTable[0])
+            isInsideRange = (remTimeTable[0] >= threshold) and (remTimeTable[0] < threshold + 5)
+
+            # Either too late or too soon, do nothing more
+            if not isInsideRange:
+                return;
+
+        # Send notification to user with the next incomming bus
+        self.notify_user(textTimeTable[0])
 
 if __name__ == '__main__':
     # Logging
