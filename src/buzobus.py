@@ -198,9 +198,6 @@ class Buzobus:
             if not properties['terminus'] == self.config["bus"]["direction"]:
                 continue
 
-            if properties['hor_estime'] == None:
-                continue
-
             timeTable.append(properties['hor_estime'])
 
         if len(timeTable) == 0:
@@ -236,8 +233,11 @@ class Buzobus:
         remTimeTable = []
 
         for timeStr in timeTable:
-            timeObj = datetime.strptime(timeStr, '%Y-%m-%dT%H:%M:%S')
-            diffInMin = self.get_datetime_diff_from_now(timeObj)
+            if timeStr != None:
+                timeObj = datetime.strptime(timeStr, '%Y-%m-%dT%H:%M:%S')
+                diffInMin = self.get_datetime_diff_from_now(timeObj)
+            else:
+                diffInMin = 0;
             remTimeTable.append(diffInMin)
 
         return remTimeTable
