@@ -54,10 +54,10 @@ class Buzobus:
 
         # Check arguments
         parser = argparse.ArgumentParser(description=APP_DESC)
-        parser.add_argument('--verbose', help='Enable verbose logs', default=False, action='store_true')
-        parser.add_argument('--always_notif', help='Always send notifications', default=False, action='store_true')
-        parser.add_argument('--no_notif', help='Prevent notifications', default=False, action='store_true')
-
+        parser.add_argument('-v', '--verbose', help='enable verbose logs', default=False, action='store_true')
+        parser.add_argument('-a', '--always_notif', help='always send notifications', default=False, action='store_true')
+        parser.add_argument('-n', '--no_notif', help='prevent notifications', default=False, action='store_true')
+        parser.add_argument('-c', '--config', default='config.json', dest="configFile", help='specify json config file', type=str)
         # Use vars() to get python dict from Namespace object
         self.args = vars(parser.parse_args())
 
@@ -198,6 +198,9 @@ class Buzobus:
             if not properties['terminus'] == self.config["bus"]["direction"]:
                 continue
 
+            if properties['hor_estime'] == None:
+                continue
+
             timeTable.append(properties['hor_estime'])
 
         if len(timeTable) == 0:
@@ -213,8 +216,6 @@ class Buzobus:
                 if not 'libelle' in properties:
                     continue
                 if not 'terminus' in properties:
-                    continue
-                if not 'hor_estime' in properties:
                     continue
 
                 self.logger.info("- Name: {0}, Direction: {1}".format(properties['libelle'], properties['terminus']))
