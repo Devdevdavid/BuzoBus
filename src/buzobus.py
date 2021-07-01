@@ -13,6 +13,7 @@ import urllib.request
 import logging
 from datetime import datetime
 from notifypy import Notify
+import traceback
 
 # Constants
 APP_NAME = "Buzobus"
@@ -32,6 +33,9 @@ class Buzobus:
     """
     Buzobus is mainly based on the algorithm proposed here:
     https://data.bordeaux-metropole.fr/opendemos/saeiv/passages
+
+    SV_ARRET_P:
+    https://opendata.bordeaux-metropole.fr/explore/dataset/sv_arret_p/table/
     """
 
     # =============
@@ -82,16 +86,107 @@ class Buzobus:
         with open(filename, "w") as outfile:
             json.dump(jsonData, outfile, indent=4)
 
+    def ask_user_to_choose(self, jsonResult):
+        print("Choose between:")
+
+        maxChoice = len(jsonResult['features']) - 1
+        minChoice = 0
+        i = 0
+        for feature in jsonResult['features']:
+            properties = feature['properties']
+            libelle = properties['libelle']
+
+            print(" - {0:3} : {1}".format(i, libelle))
+            i += 1
+
+        userChoice = int(input("Your choice: "))
+
+        # Perform user input check
+        if ((userChoice < minChoice) or (userChoice > maxChoice)):
+            raise RuntimeError("Bad choice")
+
+        return userChoice
+
     def load_config(self, filename):
         with open(filename, "r") as file:
             data = file.read()
             self.config = json.loads(data)
 
-    def bdd_get_stops(self):
+    def bdd_get_tbm_lines(self):
         url = self.config["openData"]["geojsonServer"]
-        url += '/features/SV_ARRET_P?'
+        url += '/features/SV_LIGNE_A?'
         url += 'key=' + self.config["openData"]["apiKey"]
-        url += '&attributes=["IDENT","LIBELLE"]'
+        url += '&filter={"vehicule":{"$in":["BUS","BATEAU"]}}&attributes=["gid","libelle"]'
+
+        self.logger.info("Getting TBM lines")
+        self.logger.debug("Reading {0}".format(url))
+
+        jsonResult = self.get_json_from_url(url)
+        self.save_json_to_file("tbm_lines_list.json", jsonResult)
+
+        return jsonResult
+
+    def bdd_filter_out_tbm_lines(self, jsonLines):
+        # Check
+        if not 'features' in jsonLines:
+            raise RuntimeError('Bad JSON Lines : Missing "features"')
+
+        # Init
+        removedLineCount = 0
+        jsonLinesFiltred = {}
+        jsonLinesFiltred["features"] = []
+
+        for feature in jsonLines['features']:
+            # Ignore features without the expected data
+            if not 'properties' in feature:
+                continue
+
+            properties = feature['properties']
+            if not 'libelle' in properties:
+                continue
+
+            libelle = properties['libelle']
+
+            # The filters
+            isToRemove = "Flexo" in libelle
+            isToRemove |= "Cit\u00e9is" in libelle
+            isToRemove |= "Sp\u00e9cifique" in libelle
+            isToRemove |= "Navette" in libelle
+            isToRemove |= "Relais" in libelle
+            isToRemove |= "TBNight" in libelle
+            isToRemove |= "Corol" in libelle
+            isToRemove |= "BAT3" in libelle
+
+            # Take according action
+            if (isToRemove):
+                removedLineCount += 1
+            else:
+                jsonLinesFiltred["features"].append(feature)
+
+        self.save_json_to_file("tbm_lines_filtred_list.json", jsonLinesFiltred)
+        self.logger.info("Removing {0} lines".format(removedLineCount))
+
+        return jsonLinesFiltred
+
+    def bdd_get_line_paths(self, lineGid):
+        url = self.config["openData"]["geojsonServer"]
+        url += '/features/SV_CHEM_L?'
+        url += 'key=' + self.config["openData"]["apiKey"]
+        url += '&filter={"rs_sv_ligne_a":' + str(lineGid) + '}&attributes=["gid","libelle"]'
+
+        self.logger.info("Getting line paths")
+        self.logger.debug("Reading {0}".format(url))
+
+        jsonResult = self.get_json_from_url(url)
+        self.save_json_to_file("tbm_line_path_list.json", jsonResult)
+
+        return jsonResult
+
+    def bdd_get_stops(self, pathGid):
+        url = self.config["openData"]["geojsonServer"]
+        url += '/process/saeiv_arrets_chemin?'
+        url += 'key=' + self.config["openData"]["apiKey"]
+        url += '&datainputs={"gid":' + str(pathGid) + '}&attributes=["gid","libelle"]'
 
         self.logger.info("Getting stops")
         self.logger.debug("Reading {0}".format(url))
@@ -281,7 +376,17 @@ class Buzobus:
 
         # init stop id
         if self.config["stop"]["id"] == "":
-            jsonStops = self.bdd_get_stops()
+            # Ask to choose LINE
+            jsonLines = self.bdd_get_tbm_lines()
+            jsonLinesFiltred = self.bdd_filter_out_tbm_lines(jsonLines)
+            userChoice = self.ask_user_to_choose(jsonLinesFiltred)
+
+            # Ask to choose PATH
+            linePaths = self.bdd_get_line_paths(jsonLinesFiltred["features"][userChoice]["properties"]["gid"])
+            userChoice = self.ask_user_to_choose(linePaths)
+
+            # Ask to choose STOP
+            jsonStops = self.bdd_get_stops(linePaths["features"][userChoice]["properties"]["gid"])
             stopId = self.extract_bus_stop_id(jsonStops)
         else:
             stopId = self.config["stop"]["id"]
@@ -329,6 +434,7 @@ if __name__ == '__main__':
         app.run()
     except Exception as e:
         logger.error("Exit with errors: " + str(e));
+        logger.debug(traceback.format_exc())
 
 
 
